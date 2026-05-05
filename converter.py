@@ -25,7 +25,10 @@ def capture_date(f: Path) -> datetime:
     return datetime.fromtimestamp(f.stat().st_mtime)
 
 
-def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".wmv"}
+
+
+def find_files(source_dir: Path, copy_videos: bool) -> tuple[list[Path], list[Path]]:
     heic_files, other_files = [], []
     seen = set()
     all_found = []
@@ -36,6 +39,8 @@ def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
         if key in seen:
             continue
         seen.add(key)
+        if not copy_videos and f.suffix.lower() in VIDEO_EXTENSIONS:
+            continue
         all_found.append(f)
 
     all_found.sort(key=capture_date)
@@ -48,8 +53,8 @@ def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
     return heic_files, other_files
 
 
-def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn):
-    heic_files, other_files = find_files(source_dir)
+def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn, copy_videos: bool = True):
+    heic_files, other_files = find_files(source_dir, copy_videos)
     total = len(heic_files) + len(other_files)
 
     if total == 0:
@@ -121,6 +126,12 @@ class App(tk.Tk):
         self.out_var = tk.StringVar()
         ttk.Entry(frame_top, textvariable=self.out_var, width=50).grid(row=1, column=1, **pad)
         ttk.Button(frame_top, text="Browse…", command=self._pick_output).grid(row=1, column=2)
+
+        # Options
+        self.copy_videos_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frame_top, text="Copy video files (mp4, mov, …)", variable=self.copy_videos_var).grid(
+            row=2, column=1, sticky="w", padx=10, pady=(2, 4)
+        )
 
         # Progress
         self.progress = ttk.Progressbar(self, length=500, mode="determinate")
@@ -213,6 +224,7 @@ class App(tk.Tk):
                 lambda v: self.after(0, self._set_progress, v),
                 lambda c, cp, e: self.after(0, self._done, c, cp, e),
             ),
+            kwargs={"copy_videos": self.copy_videos_var.get()},
             daemon=True,
         ).start()
 
