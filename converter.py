@@ -9,8 +9,8 @@ import pillow_heif
 pillow_heif.register_heif_opener()
 
 
-def find_images(source_dir: Path) -> tuple[list[Path], list[Path]]:
-    heic_files, jpg_files = [], []
+def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
+    heic_files, other_files = [], []
     seen = set()
     for f in source_dir.rglob("*"):
         if not f.is_file():
@@ -19,20 +19,19 @@ def find_images(source_dir: Path) -> tuple[list[Path], list[Path]]:
         if key in seen:
             continue
         seen.add(key)
-        ext = f.suffix.lower()
-        if ext == ".heic":
+        if f.suffix.lower() == ".heic":
             heic_files.append(f)
-        elif ext in (".jpg", ".jpeg"):
-            jpg_files.append(f)
-    return heic_files, jpg_files
+        else:
+            other_files.append(f)
+    return heic_files, other_files
 
 
 def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn):
-    heic_files, jpg_files = find_images(source_dir)
-    total = len(heic_files) + len(jpg_files)
+    heic_files, other_files = find_files(source_dir)
+    total = len(heic_files) + len(other_files)
 
     if total == 0:
-        log_fn("No HEIC or JPG files found in the selected folder.")
+        log_fn("No files found in the selected folder.")
         done_fn(0, 0, 0)
         return
 
@@ -41,17 +40,16 @@ def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn):
     copied = 0
     errors = 0
 
-    all_files = [("heic", f) for f in heic_files] + [("jpg", f) for f in jpg_files]
+    all_files = [("heic", f) for f in heic_files] + [("other", f) for f in other_files]
 
     for i, (kind, src) in enumerate(all_files, 1):
-        dest_name = src.with_suffix(".jpg").name
-        dest = output_dir / dest_name
+        dest_suffix = ".jpg" if kind == "heic" else src.suffix
+        dest = output_dir / (src.stem + dest_suffix)
 
         if dest.exists():
-            stem = src.stem
             counter = 1
             while dest.exists():
-                dest = output_dir / f"{stem}_{counter}.jpg"
+                dest = output_dir / f"{src.stem}_{counter}{dest_suffix}"
                 counter += 1
 
         try:
