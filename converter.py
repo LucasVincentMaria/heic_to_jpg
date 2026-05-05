@@ -4,9 +4,25 @@ import threading
 import shutil
 from pathlib import Path
 from PIL import Image, ImageOps
+from datetime import datetime
 import pillow_heif
 
 pillow_heif.register_heif_opener()
+
+
+def capture_date(f: Path) -> datetime:
+    """Return the EXIF capture date, falling back to filename then mtime."""
+    try:
+        img = Image.open(f)
+        exif = img.getexif()
+        # 0x9003 = DateTimeOriginal, 0x0132 = DateTime
+        for tag in (0x9003, 0x0132):
+            val = exif.get(tag)
+            if val:
+                return datetime.strptime(val, "%Y:%m:%d %H:%M:%S")
+    except Exception:
+        pass
+    return datetime.fromtimestamp(f.stat().st_mtime)
 
 
 def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
@@ -22,8 +38,7 @@ def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
         seen.add(key)
         all_found.append(f)
 
-    # Sort by file modification time so the original date order is preserved
-    all_found.sort(key=lambda f: f.stat().st_mtime)
+    all_found.sort(key=capture_date)
 
     for f in all_found:
         if f.suffix.lower() == ".heic":
@@ -49,7 +64,7 @@ def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn):
 
     all_files = sorted(
         [("heic", f) for f in heic_files] + [("other", f) for f in other_files],
-        key=lambda x: x[1].stat().st_mtime,
+        key=lambda x: capture_date(x[1]),
     )
 
     for i, (kind, src) in enumerate(all_files, 1):
