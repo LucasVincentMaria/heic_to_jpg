@@ -10,13 +10,20 @@ pillow_heif.register_heif_opener()
 
 
 def find_images(source_dir: Path) -> tuple[list[Path], list[Path]]:
-    heic_files = list(source_dir.rglob("*.heic")) + list(source_dir.rglob("*.HEIC"))
-    jpg_files = (
-        list(source_dir.rglob("*.jpg"))
-        + list(source_dir.rglob("*.JPG"))
-        + list(source_dir.rglob("*.jpeg"))
-        + list(source_dir.rglob("*.JPEG"))
-    )
+    heic_files, jpg_files = [], []
+    seen = set()
+    for f in source_dir.rglob("*"):
+        if not f.is_file():
+            continue
+        key = f.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        ext = f.suffix.lower()
+        if ext == ".heic":
+            heic_files.append(f)
+        elif ext in (".jpg", ".jpeg"):
+            jpg_files.append(f)
     return heic_files, jpg_files
 
 
@@ -40,10 +47,12 @@ def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn):
         dest_name = src.with_suffix(".jpg").name
         dest = output_dir / dest_name
 
-        # Avoid overwriting if two source files would produce the same name
         if dest.exists():
             stem = src.stem
-            dest = output_dir / f"{stem}_{src.parent.name}.jpg"
+            counter = 1
+            while dest.exists():
+                dest = output_dir / f"{stem}_{counter}.jpg"
+                counter += 1
 
         try:
             if kind == "heic":
