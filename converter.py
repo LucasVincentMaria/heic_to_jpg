@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox
 import threading
 import shutil
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 import pillow_heif
 
 pillow_heif.register_heif_opener()
@@ -12,6 +12,7 @@ pillow_heif.register_heif_opener()
 def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
     heic_files, other_files = [], []
     seen = set()
+    all_found = []
     for f in source_dir.rglob("*"):
         if not f.is_file():
             continue
@@ -19,6 +20,12 @@ def find_files(source_dir: Path) -> tuple[list[Path], list[Path]]:
         if key in seen:
             continue
         seen.add(key)
+        all_found.append(f)
+
+    # Sort by file modification time so the original date order is preserved
+    all_found.sort(key=lambda f: f.stat().st_mtime)
+
+    for f in all_found:
         if f.suffix.lower() == ".heic":
             heic_files.append(f)
         else:
@@ -40,7 +47,10 @@ def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn):
     copied = 0
     errors = 0
 
-    all_files = [("heic", f) for f in heic_files] + [("other", f) for f in other_files]
+    all_files = sorted(
+        [("heic", f) for f in heic_files] + [("other", f) for f in other_files],
+        key=lambda x: x[1].stat().st_mtime,
+    )
 
     for i, (kind, src) in enumerate(all_files, 1):
         dest_suffix = ".jpg" if kind == "heic" else src.suffix
@@ -55,6 +65,7 @@ def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn):
         try:
             if kind == "heic":
                 img = Image.open(src)
+                img = ImageOps.exif_transpose(img)
                 img.convert("RGB").save(dest, "JPEG", quality=95)
                 log_fn(f"Converted: {src.name}")
                 converted += 1
