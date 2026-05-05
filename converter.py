@@ -2,27 +2,94 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
 import shutil
+import re
 from pathlib import Path
 from PIL import Image, ImageOps
-from datetime import datetime
+from datetime import datetime, timedelta
 import pillow_heif
 
 pillow_heif.register_heif_opener()
 
+# Matches PXL_20250517_160252070  or  IMG_20250517_160252  or  20250517_160252
+_FILENAME_DATE_RE = re.compile(r"(?:^|[_-])(\d{8})[_-](\d{6})")
+
+CET  = timedelta(hours=1)
+CEST = timedelta(hours=2)
+
+
+def _is_dst(dt: datetime) -> bool:
+    """Rough check: CEST runs last Sunday of March → last Sunday of October."""
+    if dt.month < 3 or dt.month > 10:
+        return False
+    if dt.month > 3 and dt.month < 10:
+        return True
+    if dt.month == 3:
+        last_sun = 31 - (datetime(dt.year, 3, 31).weekday() + 1) % 7
+        return dt.day > last_sun
+    if dt.month == 10:
+        last_sun = 31 - (datetime(dt.year, 10, 31).weekday() + 1) % 7
+        return dt.day <= last_sun
+    return False
+
+
+def _parse_filename_date(name: str) -> datetime | None:
+    """
+    Extract a datetime from filenames like PXL_20250517_160252070.
+    PXL_ files store UTC; convert to German local time (CET/CEST).
+    Other patterns (IMG_, VID_, plain date) are assumed already local.
+    """
+    m = _FILENAME_DATE_RE.search(name)
+    if not m:
+        return None
+    try:
+        dt = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+    if name.upper().startswith("PXL_"):
+        offset = CEST if _is_dst(dt) else CET
+        dt = dt + offset
+
+    return dt
+
 
 def capture_date(f: Path) -> datetime:
-    """Return the EXIF capture date, falling back to filename then mtime."""
+    """EXIF DateTimeOriginal → filename timestamp → mtime."""
     try:
         img = Image.open(f)
         exif = img.getexif()
-        # 0x9003 = DateTimeOriginal, 0x0132 = DateTime
         for tag in (0x9003, 0x0132):
             val = exif.get(tag)
             if val:
                 return datetime.strptime(val, "%Y:%m:%d %H:%M:%S")
     except Exception:
         pass
+
+    dt = _parse_filename_date(f.stem)
+    if dt:
+        return dt
+
     return datetime.fromtimestamp(f.stat().st_mtime)
+
+
+def output_filename(f: Path, dest_suffix: str, used_names: set[str]) -> str:
+    """
+    Build a timestamp-based output filename: YYYYMMDD_HHMMSS[_N].ext
+    The counter suffix _N is added only when two files share the same second.
+    """
+    dt = capture_date(f)
+    base = dt.strftime("%Y%m%d_%H%M%S")
+    candidate = base + dest_suffix
+    if candidate not in used_names:
+        used_names.add(candidate)
+        return candidate
+    counter = 1
+    while True:
+        candidate = f"{base}_{counter}{dest_suffix}"
+        if candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+        counter += 1
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".wmv"}
@@ -72,15 +139,11 @@ def convert(source_dir: Path, output_dir: Path, log_fn, progress_fn, done_fn, co
         key=lambda x: capture_date(x[1]),
     )
 
-    for i, (kind, src) in enumerate(all_files, 1):
-        dest_suffix = ".jpg" if kind == "heic" else src.suffix
-        dest = output_dir / (src.stem + dest_suffix)
+    used_names: set[str] = set()
 
-        if dest.exists():
-            counter = 1
-            while dest.exists():
-                dest = output_dir / f"{src.stem}_{counter}{dest_suffix}"
-                counter += 1
+    for i, (kind, src) in enumerate(all_files, 1):
+        dest_suffix = ".jpg" if kind == "heic" else src.suffix.lower()
+        dest = output_dir / output_filename(src, dest_suffix, used_names)
 
         try:
             if kind == "heic":
